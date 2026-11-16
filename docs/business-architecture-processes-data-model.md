@@ -693,38 +693,49 @@ BR-WOF-001 written-off accounts stay in the CMS off-balance-sheet with continued
 
 ### 4.2 Overall entity relationships
 
+The overall model is shown in two parts. Part A runs from the customer to the approved limit and its collateral. Part B runs from the limit through the contract and loan to post-loan management. `CREDIT_LIMIT` is the link between them. Attributes are shown in the subject-area diagrams that follow.
+
+**Part A: customer, application, approval, limit and collateral**
+
 ```mermaid
 erDiagram
     CUSTOMER_GROUP ||--o{ GROUP_MEMBER : has
-    CUSTOMER ||--o{ GROUP_MEMBER : "belongs to"
-    CUSTOMER ||--o{ RELATED_PARTY : "is related to"
+    CUSTOMER ||--o{ GROUP_MEMBER : joins
+    CUSTOMER ||--o{ RELATED_PARTY : links
     CUSTOMER ||--o{ FINANCIAL_STATEMENT : reports
-    CUSTOMER ||--o{ RATING_RECORD : "is rated by"
+    CUSTOMER ||--o{ RATING_RECORD : rated
     CUSTOMER ||--o{ CREDIT_APPLICATION : submits
     CREDIT_APPLICATION ||--|{ FACILITY_REQUEST : contains
-    CREDIT_APPLICATION ||--o{ APPROVAL_TASK : "is routed to"
+    CREDIT_APPLICATION ||--o{ APPROVAL_TASK : routes
     APPROVAL_TASK ||--o| APPROVAL_OPINION : produces
-    CREDIT_APPLICATION ||--o| APPROVAL_DECISION : "ends with"
+    CREDIT_APPLICATION ||--o| APPROVAL_DECISION : decides
     APPROVAL_DECISION ||--o{ APPROVAL_CONDITION : imposes
     APPROVAL_DECISION ||--o{ CREDIT_LIMIT : creates
-    CREDIT_LIMIT ||--o{ CREDIT_LIMIT : "parent of"
     CREDIT_LIMIT ||--o{ LIMIT_TXN : records
-    CREDIT_LIMIT ||--o{ LOAN_CONTRACT : "is used by"
-    COLLATERAL ||--o{ COLLATERAL_VALUATION : "is valued by"
-    COLLATERAL ||--o{ COLLATERAL_LINK : "secures via"
-    CREDIT_LIMIT ||--o{ COLLATERAL_LINK : "is secured by"
-    LOAN_CONTRACT ||--o{ SECURITY_CONTRACT : "is backed by"
-    LOAN_CONTRACT ||--o{ LOAN : "is drawn as"
+    CREDIT_LIMIT ||--o{ COLLATERAL_LINK : secured
+    COLLATERAL ||--o{ COLLATERAL_LINK : allocated
+    COLLATERAL ||--o{ COLLATERAL_VALUATION : valued
+```
+
+**Part B: limit, contract, loan and post-loan management**
+
+```mermaid
+erDiagram
+    CREDIT_LIMIT ||--o{ LOAN_CONTRACT : funds
+    LOAN_CONTRACT ||--o{ SECURITY_CONTRACT : backed
+    LOAN_CONTRACT ||--o{ COVENANT : includes
+    LOAN_CONTRACT ||--o{ LOAN : drawn
     LOAN ||--|{ REPAYMENT_SCHEDULE : follows
     LOAN ||--o{ LOAN_TXN : posts
-    LOAN ||--o{ RISK_CLASSIFICATION : "is classified"
-    LOAN ||--o{ ECL_RESULT : "is provisioned"
-    CUSTOMER ||--o{ WARNING_SIGNAL : raises
-    CUSTOMER ||--o{ MONITORING_TASK : "is monitored"
-    LOAN_CONTRACT ||--o{ COVENANT : includes
-    CUSTOMER ||--o{ DELINQUENCY_CASE : has
+    LOAN ||--o{ RISK_CLASSIFICATION : classified
+    LOAN ||--o{ ECL_RESULT : provisioned
+    LOAN ||--o{ WARNING_SIGNAL : raises
+    LOAN ||--o{ DELINQUENCY_CASE : overdue
     DELINQUENCY_CASE ||--o{ COLLECTION_ACTION : logs
+    DELINQUENCY_CASE ||--o{ PAYMENT_PROMISE : records
 ```
+
+Also in the model but omitted above for readability: the limit tree is self-referencing (`CREDIT_LIMIT.parent_limit_id`); `WARNING_SIGNAL`, `MONITORING_TASK` and `DELINQUENCY_CASE` are also keyed by `customer_id`; and `CUSTOMER` owns `COLLATERAL` through `owner_customer_id`.
 
 ### 4.3 Party
 
