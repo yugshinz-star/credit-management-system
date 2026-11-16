@@ -50,84 +50,31 @@ This document defines the business design of the Credit Management System (CMS):
 The CMS is the bank's system of record for **credit decisions, limits, collateral, contracts and credit risk status**. The core banking system remains the system of record for **accounts and accounting balances**.
 
 ```mermaid
-flowchart LR
-    subgraph Channels
-        RM[RM workbench]
-        IB[Internet / mobile banking]
-        API[Partner open API]
-    end
-    subgraph CMS[Credit Management System]
-        direction TB
-        PRE[Pre-loan:<br/>customer, application,<br/>rating, approval]
-        CROSS[Cross-cutting:<br/>limits, collateral,<br/>authority, pricing]
-        IN[In-loan:<br/>contract, disbursement,<br/>servicing]
-        POST[Post-loan:<br/>monitoring, classification,<br/>collection]
-    end
-    subgraph Internal[Internal systems]
-        CORE[Core banking]
-        PAY[Payments]
-        GL[General ledger]
-        AML[AML / sanctions]
-        DWH[Data warehouse]
-        HR[HR / org directory]
-    end
-    subgraph External[External sources]
-        CB[Credit bureaus]
-        REG[Company & property registries]
-        COURT[Court records]
-        VAL[Valuation firms]
-        NEWS[News / market data]
-    end
-    Channels --> CMS
-    CMS <--> CORE
-    CMS --> PAY
-    CMS --> GL
-    CMS <--> AML
-    CMS --> DWH
-    HR --> CMS
-    CB --> CMS
-    REG --> CMS
-    COURT --> CMS
-    VAL --> CMS
-    NEWS --> CMS
+flowchart TB
+    classDef cms fill:#eef2ff,stroke:#6366f1,color:#111
+    classDef side fill:#f3f4f6,stroke:#9ca3af,color:#111
+    CH["<b>Channels</b><br/>RM workbench · Internet / mobile banking · Partner open API"]:::side
+    CMS["<b>Credit Management System</b><br/>Pre-loan: customer, application, rating, approval<br/>Cross-cutting: limits, collateral, authority, pricing<br/>In-loan: contract, disbursement, servicing<br/>Post-loan: monitoring, classification, collection"]:::cms
+    INT["<b>Internal systems</b><br/>Core banking · Payments · General ledger<br/>AML / sanctions · Data warehouse · HR / org directory"]:::side
+    EXT["<b>External sources</b><br/>Credit bureaus · Company & property registries<br/>Court records · Valuation firms · News / market data"]:::side
+    CH --> CMS
+    CMS <-->|accounts, postings, screening,<br/>reporting feeds, org data| INT
+    EXT -->|reports, records,<br/>valuations, signals| CMS
 ```
 
 ### 2.2 Capability map
 
 ```mermaid
 flowchart TB
-    subgraph L1[Customer & product]
-        C01[C-01 Customer management]
-        C02[C-02 Product management]
-    end
-    subgraph L2[Pre-loan]
-        C03[C-03 Credit origination]
-        C04[C-04 Rating & scoring]
-        C05[C-05 Credit approval]
-    end
-    subgraph L3[Cross-cutting credit controls]
-        C06[C-06 Limit management]
-        C07[C-07 Collateral management]
-        C08[C-08 Pricing management]
-        C09[C-09 Authority management]
-    end
-    subgraph L4[In-loan]
-        C10[C-10 Contract management]
-        C11[C-11 Disbursement management]
-        C12[C-12 Loan servicing]
-    end
-    subgraph L5[Post-loan]
-        C13[C-13 Monitoring & early warning]
-        C14[C-14 Asset quality & provisioning]
-        C15[C-15 Collection & recovery]
-    end
-    subgraph L6[Management & platform]
-        C16[C-16 Portfolio & risk analytics]
-        C17[C-17 Reporting]
-        C18[C-18 Platform & control]
-    end
-    L1 --> L2 --> L3 --> L4 --> L5
-    L5 --> L6
+    classDef cms fill:#eef2ff,stroke:#6366f1,color:#111
+    classDef side fill:#f3f4f6,stroke:#9ca3af,color:#111
+    L1["<b>Customer & product</b><br/>C-01 Customer management · C-02 Product management"]:::cms
+    L2["<b>Pre-loan</b><br/>C-03 Credit origination · C-04 Rating & scoring · C-05 Credit approval"]:::cms
+    L3["<b>Cross-cutting credit controls</b><br/>C-06 Limit management · C-07 Collateral management<br/>C-08 Pricing management · C-09 Authority management"]:::cms
+    L4["<b>In-loan</b><br/>C-10 Contract management · C-11 Disbursement management · C-12 Loan servicing"]:::cms
+    L5["<b>Post-loan</b><br/>C-13 Monitoring & early warning · C-14 Asset quality & provisioning<br/>C-15 Collection & recovery"]:::cms
+    L6["<b>Management & platform</b><br/>C-16 Portfolio & risk analytics · C-17 Reporting · C-18 Platform & control"]:::side
+    L1 --> L2 --> L3 --> L4 --> L5 --> L6
 ```
 
 ### 2.3 Capability definitions
@@ -1510,29 +1457,20 @@ One entry point for all credit staff. It hosts the screens of every module and g
 Products are **assembled from reusable components** instead of being coded, so a new product can be launched by configuration.
 
 ```mermaid
-flowchart LR
-    subgraph COMP[Reusable components]
-        C1[Basic info]
-        C2[Customer eligibility]
-        C3[Amount & term]
-        C4[Rate & pricing]
-        C5[Repayment methods]
-        C6[Collateral & guarantee requirements]
-        C7[Fees]
-        C8[Limit occupation rules]
-        C9[Process binding]
-        C10[Document checklist]
-        C11[Report templates]
-        C12[Accounting rules]
-    end
-    COMP --> PV[Product version]
-    PV --> L{Lifecycle}
-    L --> D1[Draft]
-    D1 --> D2[Under review]
-    D2 --> D3[Listed]
-    D3 --> D4[Suspended]
-    D4 --> D3
-    D3 --> D5[Delisted]
+flowchart TB
+    classDef cms fill:#eef2ff,stroke:#6366f1,color:#111
+    classDef side fill:#f3f4f6,stroke:#9ca3af,color:#111
+    COMP["<b>Reusable components</b><br/>Basic info · Customer eligibility · Amount & term · Rate & pricing<br/>Repayment methods · Collateral & guarantee requirements · Fees<br/>Limit occupation rules · Process binding · Document checklist<br/>Report templates · Accounting rules"]:::side
+    PV["<b>Product version</b><br/>components assembled, effective date"]:::cms
+    COMP --> PV
+    PV --> D1[Draft]:::cms
+    D1 -->|submit| D2[Under review]:::cms
+    D2 -->|approved| D3[Listed]:::cms
+    D2 -->|rejected| D1
+    D3 -->|suspend| D4[Suspended]:::cms
+    D4 -->|resume| D3
+    D3 -->|delist| D5[Delisted]:::side
+    D4 -->|delist| D5
 ```
 
 | Function | Description | Key rules |
