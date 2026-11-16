@@ -693,46 +693,78 @@ BR-WOF-001 written-off accounts stay in the CMS off-balance-sheet with continued
 
 ### 4.2 Overall entity relationships
 
-The overall model is shown in two parts. Part A runs from the customer to the approved limit and its collateral. Part B runs from the limit through the contract and loan to post-loan management. `CREDIT_LIMIT` is the link between them. Attributes are shown in the subject-area diagrams that follow.
+The overall model is shown in two parts. Part A runs from the customer to the approved limit and its collateral. Part B runs from the limit through the contract and loan to post-loan management. `CREDIT_LIMIT` is the link between them. Each arrow is labelled with its cardinality (for example `1 : 0..n` means one to zero-or-many) and the relationship. Attributes are shown in the subject-area diagrams that follow.
 
 **Part A: customer, application, approval, limit and collateral**
 
 ```mermaid
-erDiagram
-    CUSTOMER_GROUP ||--o{ GROUP_MEMBER : has
-    CUSTOMER ||--o{ GROUP_MEMBER : joins
-    CUSTOMER ||--o{ RELATED_PARTY : links
-    CUSTOMER ||--o{ FINANCIAL_STATEMENT : reports
-    CUSTOMER ||--o{ RATING_RECORD : rated
-    CUSTOMER ||--o{ CREDIT_APPLICATION : submits
-    CREDIT_APPLICATION ||--|{ FACILITY_REQUEST : contains
-    CREDIT_APPLICATION ||--o{ APPROVAL_TASK : routes
-    APPROVAL_TASK ||--o| APPROVAL_OPINION : produces
-    CREDIT_APPLICATION ||--o| APPROVAL_DECISION : decides
-    APPROVAL_DECISION ||--o{ APPROVAL_CONDITION : imposes
-    APPROVAL_DECISION ||--o{ CREDIT_LIMIT : creates
-    CREDIT_LIMIT ||--o{ LIMIT_TXN : records
-    CREDIT_LIMIT ||--o{ COLLATERAL_LINK : secured
-    COLLATERAL ||--o{ COLLATERAL_LINK : allocated
-    COLLATERAL ||--o{ COLLATERAL_VALUATION : valued
+flowchart TB
+    classDef ent fill:#eef2ff,stroke:#6366f1,color:#111
+    GRP["CUSTOMER_GROUP"]:::ent
+    GM["GROUP_MEMBER"]:::ent
+    CUS["CUSTOMER"]:::ent
+    RP["RELATED_PARTY"]:::ent
+    FS["FINANCIAL_STATEMENT"]:::ent
+    RAT["RATING_RECORD"]:::ent
+    APP["CREDIT_APPLICATION"]:::ent
+    FR["FACILITY_REQUEST"]:::ent
+    TSK["APPROVAL_TASK"]:::ent
+    OP["APPROVAL_OPINION"]:::ent
+    DEC["APPROVAL_DECISION"]:::ent
+    CND["APPROVAL_CONDITION"]:::ent
+    LIM["CREDIT_LIMIT"]:::ent
+    LTX["LIMIT_TXN"]:::ent
+    LNK["COLLATERAL_LINK"]:::ent
+    COL["COLLATERAL"]:::ent
+    VAL["COLLATERAL_VALUATION"]:::ent
+    GRP -->|"1 : 0..n · has"| GM
+    CUS -->|"1 : 0..n · joins"| GM
+    CUS -->|"1 : 0..n · links"| RP
+    CUS -->|"1 : 0..n · reports"| FS
+    CUS -->|"1 : 0..n · rated by"| RAT
+    CUS -->|"1 : 0..n · submits"| APP
+    APP -->|"1 : 1..n · contains"| FR
+    APP -->|"1 : 0..n · routed to"| TSK
+    TSK -->|"1 : 0..1 · produces"| OP
+    APP -->|"1 : 0..1 · ends with"| DEC
+    DEC -->|"1 : 0..n · imposes"| CND
+    DEC -->|"1 : 0..n · creates"| LIM
+    LIM -->|"1 : 0..n · records"| LTX
+    LIM -->|"1 : 0..n · secured by"| LNK
+    COL -->|"1 : 0..n · allocated via"| LNK
+    COL -->|"1 : 0..n · valued by"| VAL
 ```
 
 **Part B: limit, contract, loan and post-loan management**
 
 ```mermaid
-erDiagram
-    CREDIT_LIMIT ||--o{ LOAN_CONTRACT : funds
-    LOAN_CONTRACT ||--o{ SECURITY_CONTRACT : backed
-    LOAN_CONTRACT ||--o{ COVENANT : includes
-    LOAN_CONTRACT ||--o{ LOAN : drawn
-    LOAN ||--|{ REPAYMENT_SCHEDULE : follows
-    LOAN ||--o{ LOAN_TXN : posts
-    LOAN ||--o{ RISK_CLASSIFICATION : classified
-    LOAN ||--o{ ECL_RESULT : provisioned
-    LOAN ||--o{ WARNING_SIGNAL : raises
-    LOAN ||--o{ DELINQUENCY_CASE : overdue
-    DELINQUENCY_CASE ||--o{ COLLECTION_ACTION : logs
-    DELINQUENCY_CASE ||--o{ PAYMENT_PROMISE : records
+flowchart TB
+    classDef ent fill:#eef2ff,stroke:#6366f1,color:#111
+    LIM["CREDIT_LIMIT"]:::ent
+    CON["LOAN_CONTRACT"]:::ent
+    SEC["SECURITY_CONTRACT"]:::ent
+    COV["COVENANT"]:::ent
+    LN["LOAN"]:::ent
+    RS["REPAYMENT_SCHEDULE"]:::ent
+    LTX["LOAN_TXN"]:::ent
+    RC["RISK_CLASSIFICATION"]:::ent
+    ECL["ECL_RESULT"]:::ent
+    WS["WARNING_SIGNAL"]:::ent
+    DC["DELINQUENCY_CASE"]:::ent
+    CA["COLLECTION_ACTION"]:::ent
+    PP["PAYMENT_PROMISE"]:::ent
+    LIM -->|"1 : 0..n · funds"| CON
+    CON -->|"1 : 0..n · backed by"| SEC
+    CON -->|"1 : 0..n · includes"| COV
+    CON -->|"1 : 0..n · drawn as"| LN
+    LN -->|"1 : 1..n · follows"| RS
+    LN -->|"1 : 0..n · posts"| LTX
+    LN -->|"1 : 0..n · classified"| RC
+    LN -->|"1 : 0..n · provisioned"| ECL
+    LN -->|"1 : 0..n · raises"| WS
+    LN -->|"1 : 0..n · overdue in"| DC
+    DC -->|"1 : 0..n · logs"| CA
+    DC -->|"1 : 0..n · records"| PP
 ```
 
 Also in the model but omitted above for readability: the limit tree is self-referencing (`CREDIT_LIMIT.parent_limit_id`); `WARNING_SIGNAL`, `MONITORING_TASK` and `DELINQUENCY_CASE` are also keyed by `customer_id`; and `CUSTOMER` owns `COLLATERAL` through `owner_customer_id`.
@@ -740,55 +772,19 @@ Also in the model but omitted above for readability: the limit tree is self-refe
 ### 4.3 Party
 
 ```mermaid
-erDiagram
-    CUSTOMER {
-        varchar customer_id PK
-        varchar customer_type
-        varchar id_type
-        varchar id_number
-        varchar customer_name
-        varchar industry_code
-        varchar rm_user_id FK
-        varchar branch_id FK
-        varchar status
-    }
-    ORGANIZATION {
-        varchar customer_id PK
-        date established_date
-        decimal registered_capital
-        varchar legal_rep_name
-        varchar enterprise_size
-    }
-    INDIVIDUAL {
-        varchar customer_id PK
-        date birth_date
-        varchar nationality
-        varchar employer_name
-        decimal monthly_income
-    }
-    CUSTOMER_GROUP {
-        varchar group_id PK
-        varchar group_name
-        varchar parent_customer_id FK
-    }
-    GROUP_MEMBER {
-        varchar group_id PK
-        varchar customer_id PK
-        decimal ownership_pct
-        varchar control_type
-    }
-    FINANCIAL_STATEMENT {
-        varchar statement_id PK
-        varchar customer_id FK
-        date period_end
-        varchar statement_type
-        varchar audit_status
-    }
-    CUSTOMER ||--o| ORGANIZATION : "is a"
-    CUSTOMER ||--o| INDIVIDUAL : "is a"
-    CUSTOMER_GROUP ||--o{ GROUP_MEMBER : has
-    CUSTOMER ||--o{ GROUP_MEMBER : joins
-    CUSTOMER ||--o{ FINANCIAL_STATEMENT : files
+flowchart TB
+    classDef ent fill:#eef2ff,stroke:#6366f1,color:#111
+    CUS["<b>CUSTOMER</b><br/>customer_id (PK)<br/>customer_type<br/>id_type, id_number<br/>customer_name<br/>industry_code<br/>rm_user_id (FK)<br/>branch_id (FK)<br/>status"]:::ent
+    ORG["<b>ORGANIZATION</b><br/>customer_id (PK, FK)<br/>established_date<br/>registered_capital<br/>legal_rep_name<br/>enterprise_size"]:::ent
+    IND["<b>INDIVIDUAL</b><br/>customer_id (PK, FK)<br/>birth_date<br/>nationality<br/>employer_name<br/>monthly_income"]:::ent
+    GRP["<b>CUSTOMER_GROUP</b><br/>group_id (PK)<br/>group_name<br/>parent_customer_id (FK)"]:::ent
+    GM["<b>GROUP_MEMBER</b><br/>group_id (PK, FK)<br/>customer_id (PK, FK)<br/>ownership_pct<br/>control_type"]:::ent
+    FS["<b>FINANCIAL_STATEMENT</b><br/>statement_id (PK)<br/>customer_id (FK)<br/>period_end<br/>statement_type<br/>audit_status"]:::ent
+    CUS -->|"1 : 0..1 · is a"| ORG
+    CUS -->|"1 : 0..1 · is a"| IND
+    GRP -->|"1 : 0..n · has"| GM
+    CUS -->|"1 : 0..n · joins"| GM
+    CUS -->|"1 : 0..n · files"| FS
 ```
 
 **CUSTOMER**
@@ -845,52 +841,19 @@ erDiagram
 ### 4.4 Application and approval
 
 ```mermaid
-erDiagram
-    CREDIT_APPLICATION {
-        varchar application_id PK
-        varchar customer_id FK
-        varchar application_type
-        decimal total_requested_amount
-        varchar status
-        varchar required_approval_level
-    }
-    FACILITY_REQUEST {
-        varchar facility_req_id PK
-        varchar application_id FK
-        varchar product_code FK
-        decimal requested_amount
-        integer tenor_months
-    }
-    APPROVAL_TASK {
-        varchar task_id PK
-        varchar application_id FK
-        integer step_no
-        varchar assignee_user_id FK
-        varchar task_status
-    }
-    APPROVAL_OPINION {
-        varchar opinion_id PK
-        varchar task_id FK
-        varchar opinion_type
-        text comments
-    }
-    APPROVAL_DECISION {
-        varchar decision_id PK
-        varchar application_id FK
-        varchar decision_type
-        date valid_until
-    }
-    APPROVAL_CONDITION {
-        varchar condition_id PK
-        varchar decision_id FK
-        varchar condition_type
-        varchar condition_status
-    }
-    CREDIT_APPLICATION ||--|{ FACILITY_REQUEST : contains
-    CREDIT_APPLICATION ||--o{ APPROVAL_TASK : "routed to"
-    APPROVAL_TASK ||--o| APPROVAL_OPINION : produces
-    CREDIT_APPLICATION ||--o| APPROVAL_DECISION : "ends with"
-    APPROVAL_DECISION ||--o{ APPROVAL_CONDITION : imposes
+flowchart LR
+    classDef ent fill:#eef2ff,stroke:#6366f1,color:#111
+    APP["<b>CREDIT_APPLICATION</b><br/>application_id (PK)<br/>customer_id (FK)<br/>application_type<br/>total_requested_amount<br/>status<br/>required_approval_level"]:::ent
+    FR["<b>FACILITY_REQUEST</b><br/>facility_req_id (PK)<br/>application_id (FK)<br/>product_code (FK)<br/>requested_amount<br/>tenor_months"]:::ent
+    TSK["<b>APPROVAL_TASK</b><br/>task_id (PK)<br/>application_id (FK)<br/>step_no<br/>assignee_user_id (FK)<br/>task_status"]:::ent
+    OP["<b>APPROVAL_OPINION</b><br/>opinion_id (PK)<br/>task_id (FK)<br/>opinion_type<br/>comments"]:::ent
+    DEC["<b>APPROVAL_DECISION</b><br/>decision_id (PK)<br/>application_id (FK)<br/>decision_type<br/>valid_until"]:::ent
+    CND["<b>APPROVAL_CONDITION</b><br/>condition_id (PK)<br/>decision_id (FK)<br/>condition_type<br/>condition_status"]:::ent
+    APP -->|"1 : 1..n · contains"| FR
+    APP -->|"1 : 0..n · routed to"| TSK
+    TSK -->|"1 : 0..1 · produces"| OP
+    APP -->|"1 : 0..1 · ends with"| DEC
+    DEC -->|"1 : 0..n · imposes"| CND
 ```
 
 **CREDIT_APPLICATION**
@@ -992,32 +955,14 @@ erDiagram
 ### 4.6 Limit
 
 ```mermaid
-erDiagram
-    CREDIT_LIMIT {
-        varchar limit_id PK
-        varchar parent_limit_id FK
-        varchar customer_id FK
-        varchar limit_level
-        decimal approved_amount
-        decimal used_amount
-        varchar status
-    }
-    LIMIT_TXN {
-        varchar limit_txn_id PK
-        varchar limit_id FK
-        varchar txn_type
-        decimal amount
-        varchar source_ref
-    }
-    LIMIT_FREEZE {
-        varchar freeze_id PK
-        varchar limit_id FK
-        varchar reason_code
-        varchar freeze_status
-    }
-    CREDIT_LIMIT ||--o{ CREDIT_LIMIT : "parent of"
-    CREDIT_LIMIT ||--o{ LIMIT_TXN : records
-    CREDIT_LIMIT ||--o{ LIMIT_FREEZE : "is frozen by"
+flowchart LR
+    classDef ent fill:#eef2ff,stroke:#6366f1,color:#111
+    LIM["<b>CREDIT_LIMIT</b><br/>limit_id (PK)<br/>parent_limit_id (FK)<br/>customer_id (FK)<br/>limit_level<br/>approved_amount<br/>used_amount<br/>status"]:::ent
+    LTX["<b>LIMIT_TXN</b><br/>limit_txn_id (PK)<br/>limit_id (FK)<br/>txn_type<br/>amount<br/>source_ref"]:::ent
+    LF["<b>LIMIT_FREEZE</b><br/>freeze_id (PK)<br/>limit_id (FK)<br/>reason_code<br/>freeze_status"]:::ent
+    LIM -->|"1 : 0..n · parent of"| LIM
+    LIM -->|"1 : 0..n · records"| LTX
+    LIM -->|"1 : 0..n · frozen by"| LF
 ```
 
 **CREDIT_LIMIT**
@@ -1059,45 +1004,17 @@ erDiagram
 ### 4.7 Collateral
 
 ```mermaid
-erDiagram
-    COLLATERAL {
-        varchar collateral_id PK
-        varchar collateral_type
-        varchar owner_customer_id FK
-        decimal market_value
-        decimal eligible_value
-        varchar status
-    }
-    COLLATERAL_VALUATION {
-        varchar valuation_id PK
-        varchar collateral_id FK
-        date valuation_date
-        decimal market_value
-        varchar valuer_type
-    }
-    COLLATERAL_LINK {
-        varchar link_id PK
-        varchar collateral_id FK
-        varchar limit_id FK
-        decimal allocated_value
-        integer lien_rank
-    }
-    COLLATERAL_REGISTRATION {
-        varchar registration_id PK
-        varchar collateral_id FK
-        varchar registry_no
-        varchar reg_status
-    }
-    INSURANCE_POLICY {
-        varchar policy_id PK
-        varchar collateral_id FK
-        date expiry_date
-        boolean bank_loss_payee
-    }
-    COLLATERAL ||--o{ COLLATERAL_VALUATION : "valued by"
-    COLLATERAL ||--o{ COLLATERAL_LINK : "allocated via"
-    COLLATERAL ||--o{ COLLATERAL_REGISTRATION : "registered as"
-    COLLATERAL ||--o{ INSURANCE_POLICY : "insured by"
+flowchart LR
+    classDef ent fill:#eef2ff,stroke:#6366f1,color:#111
+    COL["<b>COLLATERAL</b><br/>collateral_id (PK)<br/>collateral_type<br/>owner_customer_id (FK)<br/>market_value<br/>eligible_value<br/>status"]:::ent
+    VAL["<b>COLLATERAL_VALUATION</b><br/>valuation_id (PK)<br/>collateral_id (FK)<br/>valuation_date<br/>market_value<br/>valuer_type"]:::ent
+    LNK["<b>COLLATERAL_LINK</b><br/>link_id (PK)<br/>collateral_id (FK)<br/>limit_id (FK)<br/>allocated_value<br/>lien_rank"]:::ent
+    REG["<b>COLLATERAL_REGISTRATION</b><br/>registration_id (PK)<br/>collateral_id (FK)<br/>registry_no<br/>reg_status"]:::ent
+    INS["<b>INSURANCE_POLICY</b><br/>policy_id (PK)<br/>collateral_id (FK)<br/>expiry_date<br/>bank_loss_payee"]:::ent
+    COL -->|"1 : 0..n · valued by"| VAL
+    COL -->|"1 : 0..n · allocated via"| LNK
+    COL -->|"1 : 0..n · registered as"| REG
+    COL -->|"1 : 0..n · insured by"| INS
 ```
 
 **COLLATERAL**
@@ -1147,42 +1064,15 @@ erDiagram
 ### 4.8 Contract and loan
 
 ```mermaid
-erDiagram
-    LOAN_CONTRACT {
-        varchar contract_id PK
-        varchar limit_id FK
-        varchar customer_id FK
-        varchar product_code FK
-        decimal contract_amount
-        date maturity_date
-        varchar status
-    }
-    LOAN {
-        varchar loan_id PK
-        varchar contract_id FK
-        decimal disbursed_amount
-        decimal outstanding_principal
-        integer dpd
-        varchar loan_status
-    }
-    REPAYMENT_SCHEDULE {
-        varchar loan_id PK
-        integer installment_no PK
-        date due_date
-        decimal principal_due
-        decimal interest_due
-        varchar inst_status
-    }
-    LOAN_TXN {
-        varchar loan_txn_id PK
-        varchar loan_id FK
-        varchar txn_type
-        decimal amount
-        date value_date
-    }
-    LOAN_CONTRACT ||--o{ LOAN : "drawn as"
-    LOAN ||--|{ REPAYMENT_SCHEDULE : follows
-    LOAN ||--o{ LOAN_TXN : posts
+flowchart LR
+    classDef ent fill:#eef2ff,stroke:#6366f1,color:#111
+    CON["<b>LOAN_CONTRACT</b><br/>contract_id (PK)<br/>limit_id (FK)<br/>customer_id (FK)<br/>product_code (FK)<br/>contract_amount<br/>maturity_date<br/>status"]:::ent
+    LN["<b>LOAN</b><br/>loan_id (PK)<br/>contract_id (FK)<br/>disbursed_amount<br/>outstanding_principal<br/>dpd<br/>loan_status"]:::ent
+    RS["<b>REPAYMENT_SCHEDULE</b><br/>loan_id (PK, FK)<br/>installment_no (PK)<br/>due_date<br/>principal_due<br/>interest_due<br/>inst_status"]:::ent
+    LTX["<b>LOAN_TXN</b><br/>loan_txn_id (PK)<br/>loan_id (FK)<br/>txn_type<br/>amount<br/>value_date"]:::ent
+    CON -->|"1 : 0..n · drawn as"| LN
+    LN -->|"1 : 1..n · follows"| RS
+    LN -->|"1 : 0..n · posts"| LTX
 ```
 
 **LOAN_CONTRACT**
@@ -1361,42 +1251,59 @@ erDiagram
 ### 5.1 Credit application
 
 ```mermaid
-stateDiagram-v2
-    [*] --> DRAFT
-    DRAFT --> SUBMITTED: RM submits
-    DRAFT --> WITHDRAWN: RM cancels
-    SUBMITTED --> IN_REVIEW: analyst claims task
-    IN_REVIEW --> RETURNED: incomplete
-    RETURNED --> SUBMITTED: RM resubmits
-    RETURNED --> WITHDRAWN: RM cancels
-    IN_REVIEW --> IN_APPROVAL: review opinion given
-    IN_APPROVAL --> IN_COMMITTEE: above authority
-    IN_APPROVAL --> APPROVED: approver approves
-    IN_APPROVAL --> REJECTED: approver rejects
-    IN_COMMITTEE --> APPROVED: vote passes
-    IN_COMMITTEE --> REJECTED: vote fails
-    APPROVED --> ACTIVATED: limit activated
-    APPROVED --> EXPIRED: valid_until passed
-    ACTIVATED --> [*]
-    REJECTED --> [*]
-    EXPIRED --> [*]
-    WITHDRAWN --> [*]
+flowchart TB
+    classDef st fill:#eef2ff,stroke:#6366f1,color:#111
+    classDef term fill:#f3f4f6,stroke:#9ca3af,color:#111
+    START((start)):::term
+    DRAFT["DRAFT"]:::st
+    SUBMITTED["SUBMITTED"]:::st
+    IN_REVIEW["IN_REVIEW"]:::st
+    RETURNED["RETURNED"]:::st
+    IN_APPROVAL["IN_APPROVAL"]:::st
+    IN_COMMITTEE["IN_COMMITTEE"]:::st
+    APPROVED["APPROVED"]:::st
+    ACTIVATED["ACTIVATED"]:::term
+    REJECTED["REJECTED"]:::term
+    EXPIRED["EXPIRED"]:::term
+    WITHDRAWN["WITHDRAWN"]:::term
+    START -->|"RM creates"| DRAFT
+    DRAFT -->|"RM submits"| SUBMITTED
+    DRAFT -->|"RM cancels"| WITHDRAWN
+    SUBMITTED -->|"analyst claims task"| IN_REVIEW
+    IN_REVIEW -->|"incomplete"| RETURNED
+    RETURNED -->|"RM resubmits"| SUBMITTED
+    RETURNED -->|"RM cancels"| WITHDRAWN
+    IN_REVIEW -->|"review opinion given"| IN_APPROVAL
+    IN_APPROVAL -->|"above authority"| IN_COMMITTEE
+    IN_APPROVAL -->|"approver approves"| APPROVED
+    IN_APPROVAL -->|"approver rejects"| REJECTED
+    IN_COMMITTEE -->|"vote passes"| APPROVED
+    IN_COMMITTEE -->|"vote fails"| REJECTED
+    APPROVED -->|"limit activated"| ACTIVATED
+    APPROVED -->|"valid_until passed"| EXPIRED
 ```
 
 ### 5.2 Credit limit
 
 ```mermaid
-stateDiagram-v2
-    [*] --> PENDING: approval decision
-    PENDING --> ACTIVE: contract effective and pre-contract conditions met
-    PENDING --> EXPIRED: approval validity passed
-    ACTIVE --> FROZEN: warning signal or manual freeze
-    FROZEN --> ACTIVE: unfreeze approved
-    ACTIVE --> EXPIRED: end_date reached
-    ACTIVE --> CLOSED: cancelled
-    FROZEN --> CLOSED: cancelled
-    EXPIRED --> CLOSED: all exposures settled
-    CLOSED --> [*]
+flowchart LR
+    classDef st fill:#eef2ff,stroke:#6366f1,color:#111
+    classDef term fill:#f3f4f6,stroke:#9ca3af,color:#111
+    START((start)):::term
+    PENDING["PENDING"]:::st
+    ACTIVE["ACTIVE"]:::st
+    FROZEN["FROZEN"]:::st
+    EXPIRED["EXPIRED"]:::st
+    CLOSED["CLOSED"]:::term
+    START -->|"approval decision"| PENDING
+    PENDING -->|"contract effective, conditions met"| ACTIVE
+    PENDING -->|"approval validity passed"| EXPIRED
+    ACTIVE -->|"warning signal or manual freeze"| FROZEN
+    FROZEN -->|"unfreeze approved"| ACTIVE
+    ACTIVE -->|"end_date reached"| EXPIRED
+    ACTIVE -->|"cancelled"| CLOSED
+    FROZEN -->|"cancelled"| CLOSED
+    EXPIRED -->|"all exposures settled"| CLOSED
 ```
 
 Allowed operations by status:
@@ -1412,40 +1319,54 @@ Allowed operations by status:
 ### 5.3 Loan (drawdown)
 
 ```mermaid
-stateDiagram-v2
-    [*] --> PENDING_DISB: drawdown approved
-    PENDING_DISB --> NORMAL: disbursed
-    PENDING_DISB --> CANCELLED: posting failed or cancelled
-    NORMAL --> OVERDUE: installment unpaid
-    OVERDUE --> NORMAL: overdue cleared
-    OVERDUE --> NPL: DPD > 90 or classified Substandard+
-    NORMAL --> RESTRUCTURED: terms eased for distressed borrower
-    OVERDUE --> RESTRUCTURED: terms eased
-    NPL --> RESTRUCTURED: restructuring approved
-    RESTRUCTURED --> NORMAL: probation passed
-    RESTRUCTURED --> NPL: probation failed
-    NPL --> WRITTEN_OFF: write-off approved
-    NPL --> SOLD: NPL sale
-    NORMAL --> CLOSED: fully repaid
-    NPL --> CLOSED: fully recovered
-    WRITTEN_OFF --> [*]
-    SOLD --> [*]
-    CLOSED --> [*]
-    CANCELLED --> [*]
+flowchart TB
+    classDef st fill:#eef2ff,stroke:#6366f1,color:#111
+    classDef term fill:#f3f4f6,stroke:#9ca3af,color:#111
+    START((start)):::term
+    PENDING_DISB["PENDING_DISB"]:::st
+    NORMAL["NORMAL"]:::st
+    OVERDUE["OVERDUE"]:::st
+    RESTRUCTURED["RESTRUCTURED"]:::st
+    NPL["NPL"]:::st
+    CLOSED["CLOSED"]:::term
+    WRITTEN_OFF["WRITTEN_OFF"]:::term
+    SOLD["SOLD"]:::term
+    CANCELLED["CANCELLED"]:::term
+    START -->|"drawdown approved"| PENDING_DISB
+    PENDING_DISB -->|"disbursed"| NORMAL
+    PENDING_DISB -->|"posting failed or cancelled"| CANCELLED
+    NORMAL -->|"installment unpaid"| OVERDUE
+    OVERDUE -->|"overdue cleared"| NORMAL
+    OVERDUE -->|"DPD over 90 or Substandard and worse"| NPL
+    NORMAL -->|"terms eased"| RESTRUCTURED
+    OVERDUE -->|"terms eased"| RESTRUCTURED
+    NPL -->|"restructuring approved"| RESTRUCTURED
+    RESTRUCTURED -->|"probation passed"| NORMAL
+    RESTRUCTURED -->|"probation failed"| NPL
+    NPL -->|"write-off approved"| WRITTEN_OFF
+    NPL -->|"NPL sale"| SOLD
+    NORMAL -->|"fully repaid"| CLOSED
+    NPL -->|"fully recovered"| CLOSED
 ```
 
 ### 5.4 Collateral
 
 ```mermaid
-stateDiagram-v2
-    [*] --> DRAFT: registered in CMS
-    DRAFT --> VALUED: valuation approved
-    VALUED --> PLEDGED: linked and legally registered
-    PLEDGED --> PLEDGED: revaluation
-    PLEDGED --> RELEASED: no secured exposure, release approved
-    PLEDGED --> ENFORCED: enforcement completed
-    RELEASED --> [*]
-    ENFORCED --> [*]
+flowchart LR
+    classDef st fill:#eef2ff,stroke:#6366f1,color:#111
+    classDef term fill:#f3f4f6,stroke:#9ca3af,color:#111
+    START((start)):::term
+    DRAFT["DRAFT"]:::st
+    VALUED["VALUED"]:::st
+    PLEDGED["PLEDGED"]:::st
+    RELEASED["RELEASED"]:::term
+    ENFORCED["ENFORCED"]:::term
+    START -->|"registered in CMS"| DRAFT
+    DRAFT -->|"valuation approved"| VALUED
+    VALUED -->|"linked and legally registered"| PLEDGED
+    PLEDGED -->|"revaluation"| PLEDGED
+    PLEDGED -->|"no secured exposure, release approved"| RELEASED
+    PLEDGED -->|"enforcement completed"| ENFORCED
 ```
 
 ---
