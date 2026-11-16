@@ -3,7 +3,7 @@
 | Item | Value |
 | --- | --- |
 | Document | Detailed business design |
-| Version | 0.1 (draft) |
+| Version | 0.2 (draft): adds functional module design, sections 8–10 |
 | Date | 2026-11-16 |
 | Scope | Corporate, SME and retail credit; on-balance-sheet loans and off-balance-sheet facilities (guarantees, L/Cs) |
 | Related | [Departments and Roles](departments-and-roles.md) |
@@ -19,7 +19,10 @@ This document defines the business design of the Credit Management System (CMS):
 5. [State machines](#5-state-machines)
 6. [Business events](#6-business-events)
 7. [Business rules catalog](#7-business-rules-catalog)
-8. [Open questions](#8-open-questions)
+8. [Functional module design (microservices)](#8-functional-module-design-microservices)
+9. [Additional business processes](#9-additional-business-processes)
+10. [Additional data entities](#10-additional-data-entities)
+11. [Open questions](#11-open-questions)
 
 ---
 
@@ -152,7 +155,7 @@ flowchart TB
 
 ### 2.4 Business domains (module boundaries)
 
-Each domain owns its data. Other domains read it through services or events and do not update it directly.
+Section 8 turns these domains into 17 deployable functional modules (M01–M17). Each domain owns its data. Other domains read it through services or events and do not update it directly.
 
 | Domain | Owns (master data) | Consumes from |
 | --- | --- | --- |
@@ -1432,7 +1435,767 @@ Events are published after the business transaction commits. Consumers include o
 
 ---
 
-## 8. Open questions
+## 8. Functional module design (microservices)
+
+This section breaks the system into deployable functional modules, one microservice (or small group of services) each. It refines the capabilities in section 2.3 to function level, using a reference functional scope for a full-lifecycle credit system: product factory, customer management, credit application and approval, contract and disbursement, loan management, limit control, credit accounting, post-loan management, guarantee management, risk warning, asset preservation, archives, reports, process configuration and a unified portal.
+
+### 8.1 Module map
+
+```mermaid
+flowchart TB
+    classDef layer fill:#eef2ff,stroke:#6366f1,color:#111
+    classDef shared fill:#ecfdf5,stroke:#10b981,color:#111
+    classDef ext fill:#f3f4f6,stroke:#9ca3af,color:#111
+    ACCESS["<b>Access layer</b><br/>M01 Unified Portal · API gateway / channel access"]:::layer
+    PRE["<b>Pre-loan services</b><br/>M02 Product Center · M03 Customer Management<br/>M04 Rating Center · M05 Credit Application & Approval"]:::layer
+    IN["<b>In-loan services</b><br/>M06 Contract & Disbursement · M07 Limit Control · M08 Collateral Center<br/>M09 Guarantee Management · M10 Loan Management · M11 Credit Accounting"]:::layer
+    POST["<b>Post-loan services</b><br/>M12 Post-loan Center · M14 Asset Preservation"]:::layer
+    SHARED["<b>Shared business services</b><br/>M13 Risk Control · M15 Archives Center<br/>M16 Report Center · M17 Process Center"]:::shared
+    PLAT["<b>Technical platform</b><br/>Rule engine & model service · Message bus · Users, roles & data scope<br/>Notification · File storage · Batch scheduler"]:::ext
+    EXT["<b>Core & external systems</b><br/>Core banking · General ledger · Credit bureau · External data"]:::ext
+    ACCESS --> PRE --> IN --> POST
+    PRE -.uses.-> SHARED
+    IN -.uses.-> SHARED
+    POST -.uses.-> SHARED
+    SHARED --> PLAT
+    IN <-->|posting, balances| EXT
+    PRE <-->|bureau, registry data| EXT
+```
+
+### 8.2 Module catalog
+
+| ID | Module | Maps to capability | Owns data (section 4 / 10) | Main consumers |
+| --- | --- | --- | --- | --- |
+| M01 | Unified Portal | C-18 | User workbench, preferences, notices | All users |
+| M02 | Product Center | C-02, C-08 | PRODUCT, PRODUCT_VERSION, PRODUCT_COMPONENT | M05, M06, M07, M10, M11 |
+| M03 | Customer Management | C-01 | CUSTOMER and party entities | All modules |
+| M04 | Rating Center | C-04 | RATING_MODEL, RATING_RECORD | M05, M07, M13, M12 |
+| M05 | Credit Application & Approval | C-03, C-05, C-09 | CREDIT_APPLICATION, APPROVAL_* | M07, M06 |
+| M06 | Contract & Disbursement | C-10, C-11 | LOAN_CONTRACT, DISBURSEMENT_REQUEST | M10, M07, M11 |
+| M07 | Limit Control | C-06 | CREDIT_LIMIT, LIMIT_TXN, LIMIT_FREEZE | M05, M06, M13 |
+| M08 | Collateral Center | C-07 | COLLATERAL and related entities | M05, M06, M12, M14 |
+| M09 | Guarantee Management | C-07 | GUARANTEE, GUARANTOR_EXPOSURE, GUARANTEE_COMPANY | M05, M06, M14 |
+| M10 | Loan Management | C-12 | LOAN, REPAYMENT_SCHEDULE, LOAN_TXN | M11, M12, M14 |
+| M11 | Credit Accounting | C-12, C-14 | ACCOUNTING_EVENT, ACCOUNTING_ENTRY | GL, M17 reports |
+| M12 | Post-loan Center | C-13 | MONITORING_*, FUND_FLOW_CHECK, SCREENING_CAMPAIGN | M13, M14 |
+| M13 | Risk Control | C-13, C-14 | RISK_RULE, RISK_HIT, WARNING_SIGNAL, RISK_CLASSIFICATION | All business modules |
+| M14 | Asset Preservation | C-15 | NPL_ASSET, DISPOSAL_PLAN, LITIGATION_CASE, WRITE_OFF | M11, reporting |
+| M15 | Archives Center | C-18 | ARCHIVE_FILE, ARCHIVE_ITEM, ARCHIVE_BORROW | Audit, all modules |
+| M16 | Report Center | C-17 | REPORT_TEMPLATE, REPORT_INSTANCE | M05, M12, management |
+| M17 | Process Center | C-18 | PROCESS_DEFINITION, PROCESS_INSTANCE, TASK | All workflow modules |
+
+**Service boundaries:** each module owns its tables and exposes them only through APIs and events (AP-6). Cross-module reads that need speed (for example, customer name on a task list) use cached read models fed by events, not direct database joins.
+
+---
+
+### 8.3 M01 Unified Portal
+
+One entry point for all credit staff. It hosts the screens of every module and gives each user a single place to find their work.
+
+| Function | Description | Key rules |
+| --- | --- | --- |
+| Single sign-on | One login across all modules, linked to the bank's directory | Session timeout; MFA for approvers |
+| Workbench | To-do, in-progress, completed and returned tasks across all processes | Sorted by SLA due time; overdue tasks highlighted |
+| Notifications | System messages, warning signals, approval results, expiry reminders | Delivered in-app, plus email/SMS by notice type |
+| Customer 360° view | Customer profile, group, rating, limits, exposures, collateral, loans, signals, files on one page | Data masked by role (DR-6) |
+| Global search | Search customers, applications, contracts, loans, collateral by number or name | Results filtered by data scope |
+| Personal dashboard | Role-specific KPIs: pipeline, approvals pending, overdue, warning signals | Built on Report Center (M16) |
+| Delegation | Users set temporary delegation of tasks (with approval) | BR-AUT delegation rules |
+| Channel access | Exposes services to internet banking, mobile and partner APIs through the API gateway | Channel identity and rate limits |
+
+---
+
+### 8.4 M02 Product Center (product factory)
+
+Products are **assembled from reusable components** instead of being coded, so a new product can be launched by configuration.
+
+```mermaid
+flowchart LR
+    subgraph COMP[Reusable components]
+        C1[Basic info]
+        C2[Customer eligibility]
+        C3[Amount & term]
+        C4[Rate & pricing]
+        C5[Repayment methods]
+        C6[Collateral & guarantee requirements]
+        C7[Fees]
+        C8[Limit occupation rules]
+        C9[Process binding]
+        C10[Document checklist]
+        C11[Report templates]
+        C12[Accounting rules]
+    end
+    COMP --> PV[Product version]
+    PV --> L{Lifecycle}
+    L --> D1[Draft]
+    D1 --> D2[Under review]
+    D2 --> D3[Listed]
+    D3 --> D4[Suspended]
+    D4 --> D3
+    D3 --> D5[Delisted]
+```
+
+| Function | Description | Key rules |
+| --- | --- | --- |
+| Product catalog | Tree of product categories: corporate loans, retail loans, trade finance, guarantees, bills, interbank | Each product has one category |
+| Product configuration | Fill each component for a product version | Mandatory components by category |
+| Component library | Maintain reusable components shared by many products | A change to a shared component creates new product versions, not silent edits |
+| Versioning | Every change creates a new version with an effective date | Existing contracts keep the version they were signed under |
+| Listing / delisting | Draft → review → listed → suspended → delisted | Listing needs Risk + Product approval (maker-checker); delisting stops new applications only |
+| Channel availability | Which channels can sell the product | |
+| Product test | Simulate an application against the product rules before listing | Required before first listing |
+
+**Product component detail**
+
+| Component | Example parameters |
+| --- | --- |
+| Customer eligibility | Customer types, segments, industries allowed / excluded, minimum rating, age range (retail) |
+| Amount & term | Min / max amount, min / max tenor, grace period |
+| Rate & pricing | Fixed / floating, base rate, margin range by rating, penalty rate multiple |
+| Repayment methods | Allowed methods, repayment frequency, first repayment rule |
+| Collateral & guarantee | Required mitigant types, maximum LTV, guarantor requirements |
+| Fees | Arrangement, commitment, prepayment fee rules |
+| Limit occupation | Revolving or not, credit conversion factor, which limit type it uses |
+| Process binding | Which approval and disbursement processes apply (from M17) |
+| Document checklist | Required documents per process step |
+| Report templates | Investigation and approval report templates (from M16) |
+| Accounting rules | GL account mapping per accounting event (from M11) |
+
+---
+
+### 8.5 M03 Customer Management
+
+Covers four customer types with a common core and type-specific extensions.
+
+| Customer type | Specific data | Specific functions |
+| --- | --- | --- |
+| Corporate | Registration, shareholders, management, financial statements, related enterprises | Financial statement import and spreading; shareholder tree |
+| Individual | Identity, employment, income, household, assets | Income verification; household / spouse linkage |
+| Peer (financial institution) | Licence type, regulator, capital adequacy, external ratings | Interbank limit (counterparty limit) under M07 |
+| Group | Member list, parent company, control relationships | Group identification, group limit, group exposure view |
+
+| Function | Description | Key rules |
+| --- | --- | --- |
+| Create / modify / query | Maintain customer records with maker-checker on key fields | BR-CUS-001 uniqueness; changes to key fields (name, ID, industry) need review |
+| Delete (logical) | Close a customer with no active business | Not allowed while any limit, contract or loan is active (DR-7) |
+| Customer merge | Merge duplicate records | Moves all business to the surviving ID; audit trail kept |
+| Group identification | System proposes group links from shareholding and guarantee chains | BR-CUS-003; confirmed by RM, approved by risk |
+| Related party management | Bank insiders and related enterprises | Related-party lending limits checked by M13 |
+| Financial statements | Import, spread to standard chart, ratio analysis | BR-CUS-004 balance check |
+| External data | Credit bureau, registry, court, tax data pulled on demand or on schedule | Consent recorded |
+| Customer status | Prospect, active, frozen, closed; blacklist and watch list flags | Blacklisted customers blocked at application (M13) |
+| Customer transfer | Reassign RM or branch | Approval; open tasks move with the customer |
+
+---
+
+### 8.6 M04 Rating Center
+
+| Function | Description | Key rules |
+| --- | --- | --- |
+| Model management | Maintain rating models and scorecards per segment, with versions | Model change needs validation sign-off |
+| Corporate rating | Quantitative (financials) + qualitative factors → score → grade → PD | P-04 |
+| Individual rating / scoring | Application scorecard and behavior scorecard | Behavior score refreshed monthly |
+| Group rating | Group-level rating from parent and consolidated data; member rating capped by group rating unless stand-alone strength is proven | Ceiling rule configurable |
+| Peer rating | Financial institution model (capital, asset quality, liquidity, external rating) | |
+| Facility rating | LGD by collateral type and seniority | Feeds ECL and pricing |
+| Override and approval | Override with reason and authority | BR-RAT-002 |
+| Re-rating | Annual, and on trigger events from M13 | BR-RAT-003 |
+| Rating history and migration | Grade history, migration matrices | Input to model monitoring |
+
+---
+
+### 8.7 M05 Credit Application & Approval
+
+Covers all corporate and individual credit across the bank, so every branch follows the same standardized process and approval can be centralized.
+
+| Function | Description | Key rules |
+| --- | --- | --- |
+| Credit application | New, renewal, increase, change, one-off; multiple facilities per application | BR-APP-001 |
+| Comprehensive credit line | One application grants a customer-level line split into facility limits | Limit tree created in M07 |
+| Group credit | One application for a group with member allocations | Group limit ≥ sum of member allocations unless shared |
+| Low-risk business | Fast track for fully cash-secured or bank-guaranteed business | Simplified route; still occupies limits |
+| Due diligence | Investigation report built from template (M16), documents attached | Mandatory sections by product |
+| Pricing proposal | Price checked against the pricing grid | BR-PRC-001 |
+| Risk pre-check | M13 rules run at submit: blacklist, industry, concentration, related party | Hard rules block; soft rules warn |
+| Approval routing | Route from authority matrix and process definition (M17) | BR-AUT-001, BR-AUT-002 |
+| Review and approval | Independent review, approval, countersign, committee | BR-APP-005 |
+| Approval report | Generated from template with review opinions (M16) | Locked after decision |
+| Reconsideration | Customer appeal of a rejection; new review by a higher level | One appeal per application |
+| Centralized approval | Applications from all branches routed to a central approval center by product and amount | Workload balancing by queue |
+
+---
+
+### 8.8 M06 Contract & Disbursement
+
+Manages the request and approval of each **use of credit** (drawdown, guarantee issue, L/C issue), balancing customer access to funds with risk control.
+
+| Function | Description | Key rules |
+| --- | --- | --- |
+| Contract generation | From template and approval; security and guarantee contracts generated alongside | BR-CON-001 |
+| Contract signing | Paper or e-signature; signing record | Signatory authority check |
+| Disbursement application | Customer or RM requests a drawdown under a contract | Within contract availability period |
+| Disbursement approval | Credit Admin maker-checker with checklist; higher-risk items routed to approvers | BR-DIS-001 |
+| Condition verification | Check approval conditions and document checklist | All PRE_DISB conditions MET or WAIVED |
+| Entrusted payment | Pay suppliers directly from the loan | BR-DIS-002; beneficiary checked against purpose |
+| Self-directed payment | Borrower pays; use of funds verified after the fact by M12 | Evidence due within N days |
+| Off-balance issuance | Issue guarantees, L/Cs, acceptance bills under the limit | Occupies limit at CCF |
+| Core banking posting | Create loan account and post disbursement | BR-DIS-003 rollback |
+| Contract changes | Amendments, extensions, termination | Re-approval where terms change (P-10) |
+
+---
+
+### 8.9 M07 Limit Control
+
+Unified management of the **creation, use and release** of credit limits for all asset businesses across all business lines (corporate, retail, interbank, trade, investment).
+
+| Function | Description | Key rules |
+| --- | --- | --- |
+| Limit setup | Limit tree created from approval | BR-LIM-001 |
+| Limit types | Customer comprehensive limit; single facility limit; group limit; interbank (peer) counterparty limit; industry / country / product portfolio limits | Each limit type has its own occupation rules |
+| Real-time occupation | Synchronous check-and-occupy API for every module and channel | BR-LIM-003, all levels atomic |
+| Pre-occupation | Reserve limit at approval of a disbursement, confirm on posting, release on cancel | Pre-occupations expire after N days |
+| Release | On repayment (revolving), maturity, cancellation | Non-revolving never re-opens |
+| Limit adjustment | Increase, reduce, extend, transfer between members of a group | Via approval |
+| Limit allocation | Split a group or customer limit to members, branches or channels | Sum ≤ parent unless shared |
+| Freeze / unfreeze | Manual or automatic (M13 RED signal) | BR-LIM-004 |
+| Dynamic monitoring | Utilization, approaching expiry, overdrawn, concentration dashboards | Alerts at 80% and 100% utilization |
+| Reconciliation | Rebuild used amount from LIMIT_TXN and exposures daily | DR-2 |
+
+---
+
+### 8.10 M08 Collateral Center
+
+Full-lifecycle management of collateral information, valuation and registration. Detailed in P-06 and section 4.7.
+
+| Function | Description | Key rules |
+| --- | --- | --- |
+| Collateral registration | Record collateral and owner, with type-specific attribute sets (real estate, deposit, securities, receivables, equipment, vehicles, IP) | Attribute template per type |
+| Valuation | Internal, external (panel), and automated (index-based) valuation | BR-COL-001 |
+| Revaluation | Scheduled and event-driven | BR-COL-005 |
+| Registration management | Mortgage / pledge registration with registry, certificate numbers, expiry | Registration before disbursement |
+| Warehouse (vault) management | Original title documents in and out of the vault | Dual control |
+| Insurance | Policies, expiry alerts, claims | Bank as loss payee |
+| Allocation | Allocate value across limits / contracts with lien rank | BR-COL-003 |
+| Monitoring | LTV, value drop, expiry signals to M13 | |
+| Release and enforcement | Release after repayment; hand over to M14 for enforcement | BR-COL-007 |
+
+---
+
+### 8.11 M09 Guarantee Management
+
+Manages guarantees **received** as credit mitigation (personal, corporate, guarantee-company guarantees). Bank-**issued** guarantees (L/Gs) are products in M02 that occupy limits in M07.
+
+| Function | Description | Key rules |
+| --- | --- | --- |
+| Guarantor registration | Guarantor is a customer in M03 | KYC applies |
+| Guarantee contract | Type (joint and several, limited), amount, period, scope | Linked to limit or contract |
+| Guarantor capacity | Track each guarantor's total guaranteed amount across the bank | Capacity check against guarantor's financial strength |
+| Mutual / chain guarantee detection | Detect A guarantees B and B guarantees A, and longer chains | Raises risk signal (M13); counts toward group identification |
+| Guarantee company management | Cooperation agreements, margin deposits, compensation limits, performance tracking | Total exposure per company capped |
+| Guarantee claims | Call on guarantor or guarantee company when borrower defaults | Hand-off to M14 |
+
+---
+
+### 8.12 M10 Loan Management
+
+| Function | Description | Key rules |
+| --- | --- | --- |
+| Loan account view | Balances, schedule, transactions, rate history | Mirror of core banking, reconciled daily (DR-3) |
+| Repayment | Scheduled, early, partial, full; allocation order | BR-SRV-001 |
+| Rate management | Floating rate reset, rate change approval | |
+| Extension / rescheduling | Change requests with approval | BR-CHG-001 |
+| Loan transfer | Transfer between branches or to asset preservation | |
+| Five-category / stage display | Current classification and history | From M13 |
+| Interest and fee calculation | Accrual, penalty, compound interest where allowed | Day-count per product |
+
+---
+
+### 8.13 M11 Credit Accounting
+
+Turns credit business events into accounting entries for the general ledger, using rules configured per product (M02).
+
+```mermaid
+flowchart LR
+    E[Business event<br/>from M06, M10, M13, M14] --> R[Accounting rule lookup<br/>product + event type]
+    R --> J[Generate entries<br/>debit / credit]
+    J --> V{Balanced?}
+    V -- no --> X[Exception queue]
+    V -- yes --> P[Post to GL interface]
+    P --> RC[Daily reconciliation<br/>sub-ledger vs GL]
+```
+
+**Accounting events and entries (example)**
+
+| Event | Debit | Credit |
+| --- | --- | --- |
+| Loan disbursed | Loans and advances | Customer deposit / clearing |
+| Interest accrued | Interest receivable | Interest income |
+| Repayment received | Customer deposit / clearing | Loans and advances; interest receivable |
+| Loan becomes overdue | Overdue loans | Loans and advances (normal) |
+| Penalty interest accrued | Interest receivable (penalty) | Interest income (penalty), or off-balance memo if non-accrual |
+| Moved to non-accrual (NPL) | Off-balance interest memo | — (stop accruing on balance sheet) |
+| ECL provision increased | Impairment loss | Loan loss allowance |
+| Loan written off | Loan loss allowance | Loans and advances |
+| Recovery after write-off | Customer deposit / clearing | Other income / allowance |
+| Guarantee / L/C issued (off-balance) | Off-balance commitment | Off-balance contra |
+| Fee received | Customer deposit | Fee income (or deferred income for amortized fees) |
+
+| Function | Description | Key rules |
+| --- | --- | --- |
+| Accounting rule configuration | Event × product → entry template with GL accounts | Rule change needs Finance approval |
+| Sub-ledger | Credit sub-ledger by loan / contract | Balanced per event |
+| Non-accrual handling | Stop on-balance interest at NPL; track in memo | Per local rule (e.g. 90 DPD) |
+| Provision posting | Post ECL from M13 month-end | E-ECL-POSTED |
+| Reconciliation | Sub-ledger vs GL vs core banking | Breaks to exception queue |
+| Accounting reports | Trial balance, interest income, provision movement | Via M16 |
+
+---
+
+### 8.14 M12 Post-loan Center
+
+Three functional groups: **fund monitoring**, **post-loan inspection** and **risk screening**.
+
+| Group | Function | Description | Key rules |
+| --- | --- | --- | --- |
+| Fund monitoring | Use-of-funds tracking | Follow disbursed funds through the borrower's accounts | First check within 15–30 days |
+| | Abnormal flow detection | Funds returned to the borrower or related parties, moved to restricted uses (e.g. securities, real estate speculation), split into many small transfers | Rule-based (M13); hits create signals |
+| | Repayment source monitoring | Account inflows vs expected repayment | EW-03 |
+| Post-loan inspection | First inspection | Confirm funds used as stated | P-11 |
+| | Periodic inspection | Scheduled by risk level; on-site or off-site; inspection report from M16 template | Frequency table in 3.12 |
+| | Special inspection | Triggered by signals or management request | Due by severity |
+| | Covenant tests | Financial and information covenants | COVENANT_TEST |
+| | Collateral inspection | Site check of collateral condition | Photo evidence |
+| Risk screening | Screening campaign | Bulk review of a portfolio slice by criteria (industry, region, product, rating, exposure size), e.g. after a sector shock | SCREENING_CAMPAIGN |
+| | Task distribution | Campaign creates review tasks per customer for RMs | Deadline per campaign |
+| | Result consolidation | Findings, actions, re-classification, summary report | Feeds M13 and management |
+
+---
+
+### 8.15 M13 Risk Control
+
+Identifies and **intercepts** risk across the whole business flow, using configurable rules and models.
+
+```mermaid
+flowchart LR
+    A[Customer onboarding] --> B[Credit application]
+    B --> C[Approval]
+    C --> D[Contract]
+    D --> E[Disbursement]
+    E --> F[Post-loan]
+    F --> G[Collection / preservation]
+    R1([Blacklist, sanctions,<br/>AML]) -.-> A
+    R2([Policy rules: industry,<br/>concentration, related party,<br/>large exposure]) -.-> B
+    R3([Authority, pricing,<br/>exceptions]) -.-> C
+    R4([Terms within approval]) -.-> D
+    R5([Limit, freeze, conditions,<br/>fund purpose]) -.-> E
+    R6([Warning rules & models,<br/>fund flow, covenants]) -.-> F
+    R7([Classification, ECL]) -.-> G
+```
+
+| Function | Description | Key rules |
+| --- | --- | --- |
+| Rule management | Define rules: condition, interception point, action (block, warn, route up, notify), effective dates | Rule change needs Risk approval; versioned |
+| Model management | Early-warning and fraud models, scores and thresholds | Model monitoring monthly |
+| Interception | Rules called synchronously at each interception point | Response < 300 ms for online flows |
+| Warning signal management | Signal catalog, grading, assignment, handling, closure | P-11 |
+| Blacklist / watch list | Bank-wide lists with reasons and expiry | Blacklist hit blocks new credit |
+| Risk classification | Month-end classification and adjustments | P-12 |
+| Concentration control | Industry, region, product, single-name and group caps | BR-LIM-003 |
+| Rule hit log | Every evaluation and hit recorded with input data | Audit and rule tuning |
+
+**Rule action types**
+
+| Action | Effect |
+| --- | --- |
+| BLOCK | Stop the transaction; reason shown |
+| WARN | Continue; warning visible to all later approvers |
+| ESCALATE | Raise required approval level |
+| REQUIRE | Add a mandatory document or condition |
+| NOTIFY | Send notice to risk / compliance |
+| SIGNAL | Create a warning signal |
+
+---
+
+### 8.16 M14 Asset Preservation
+
+Daily management and disposal of non-performing assets, to reduce losses and maximize recovery.
+
+```mermaid
+flowchart TD
+    A[Loan classified NPL<br/>or transferred] --> B[NPL asset created<br/>owner: special assets team]
+    B --> C[Asset assessment:<br/>borrower, guarantors, collateral,<br/>recovery estimate]
+    C --> D[Disposal plan]
+    D --> D1[Collection & negotiation]
+    D --> D2[Restructuring]
+    D --> D3[Litigation & enforcement]
+    D --> D4[Debt-to-asset settlement]
+    D --> D5[NPL transfer / sale]
+    D --> D6[Write-off]
+    D1 --> E[Recovery recorded]
+    D2 --> E
+    D3 --> E
+    D4 --> F[Foreclosed asset management]
+    D5 --> E
+    D6 --> G[Off-balance tracking<br/>continued recovery]
+    F --> E
+    G --> E
+```
+
+| Function | Description | Key rules |
+| --- | --- | --- |
+| NPL transfer | Move loans to the preservation team with full file | Automatic at NPL or by decision |
+| Asset ledger | One record per NPL asset: principal, interest, costs, collateral, guarantors | Daily balances from M10 |
+| Disposal plan | Chosen route(s), expected recovery, timeline; approved by authority | BR per amount |
+| Litigation management | Cases, courts, hearings, judgments, enforcement, legal costs | Statute of limitation reminders |
+| Debt-to-asset (foreclosed assets) | Assets received in settlement: valuation, holding, sale | Holding period limits |
+| NPL transfer / sale | Portfolio packaging, valuation, bidding, settlement | Board / committee approval |
+| Write-off | Evidence, approval, off-balance tracking | BR-WOF-001 |
+| Recovery accounting | Allocate recoveries to costs, interest, principal | Events to M11 |
+| Performance | Recovery rate, time to recover, cost of recovery per team | Via M16 |
+
+---
+
+### 8.17 M15 Archives Center
+
+Unified management of credit, disbursement and post-loan files (electronic and physical) to keep them complete and secure, and to support access, audit and risk tracing.
+
+| Function | Description | Key rules |
+| --- | --- | --- |
+| File collection | Each business object (customer, application, contract, loan, collateral) has a file; documents are added as the process runs | Checklist per product (M02) |
+| Completeness check | Archive officer checks required items before filing | Missing items returned to owner |
+| Physical archive | Box, shelf and location for paper originals; barcode labels | Dual control for originals |
+| Electronic archive | Scans and native e-documents with hash for integrity | Tamper detection by hash |
+| Borrow and return | Request, approval, lending, due date, return | Overdue borrowing alerts |
+| Access control | Access by role and data scope; every view logged | Audit trail |
+| Retention and destruction | Retention period per file type; destruction needs approval | No destruction during litigation hold |
+| Search | By customer, contract, loan, collateral, document type | |
+
+---
+
+### 8.18 M16 Report Center
+
+Two kinds of reports: **business documents** used inside processes, and **management reports**.
+
+| Type | Examples | Design |
+| --- | --- | --- |
+| Business documents | Investigation (due diligence) report, review report, approval report, post-loan inspection report, disbursement checklist, collection letters | Template with sections and fields; fields auto-filled from business data; free-text sections edited online; versioned; locked when the process step completes; exported to PDF |
+| Management reports | Portfolio by product / industry / region / rating, approval pipeline, limit utilization, NPL and provision movement, post-loan task completion, collection performance | Built on data warehouse; parameters; scheduled distribution; drill-down |
+| Regulatory reports | Large exposures, related-party lending, asset quality, interbank exposure | Per regulator format; data lineage to source |
+
+| Function | Description | Key rules |
+| --- | --- | --- |
+| Template designer | Define sections, fields, data bindings, mandatory items | Template version bound to product (M02) |
+| Online editing | Edit report within the task; auto-save | Only the task owner can edit |
+| Display and viewing | Read-only view for approvers and auditors | Viewing logged |
+| Report generation | PDF / Word output with watermark | Final version archived to M15 |
+| Statistics | Ad-hoc query and dashboards for management | Data scope applies |
+
+---
+
+### 8.19 M17 Process Center
+
+Unified configuration and management of all credit business processes, so processes can be standardized and adjusted without code changes.
+
+| Function | Description | Key rules |
+| --- | --- | --- |
+| Process definition | Visual designer: nodes (task, approval, countersign, committee, automatic, sub-process), transitions, conditions | Versioned; running cases keep their version |
+| Assignment rules | Who handles each node: role + org level + data scope, specific user, previous handler's manager, pool / queue | Segregation of duties (BR-APP-005) |
+| Routing conditions | Expressions on business data (amount, rating, product, rule hits) | Can call authority matrix (C-09) |
+| Countersign | Parallel review by several roles; all, majority or any | |
+| Return and withdraw | Return to any earlier node; originator withdraw before first action | Reason mandatory |
+| SLA and escalation | Due time per node, reminders, auto-escalation | Business calendar (holidays) |
+| Process monitoring | Running instances, bottlenecks, average time per node | Feeds management dashboards |
+| Process binding | Product × business type → process definition | Configured in M02 |
+
+**Standard process catalog**
+
+| Process | Used by |
+| --- | --- |
+| Customer onboarding / key-field change | M03 |
+| Rating approval / override | M04 |
+| Credit approval (by level: branch, regional, head office, committee) | M05 |
+| Disbursement approval | M06 |
+| Limit adjustment / freeze / unfreeze | M07 |
+| Collateral registration / release | M08 |
+| Loan change (extension, rescheduling) | M10 |
+| Post-loan inspection | M12 |
+| Classification adjustment | M13 |
+| Disposal plan / write-off | M14 |
+| File borrowing | M15 |
+| Product listing / delisting | M02 |
+
+---
+
+## 9. Additional business processes
+
+These processes come from the module design in section 8 and extend the process inventory in 3.1.
+
+| ID | Process | Module | Trigger | Output |
+| --- | --- | --- | --- | --- |
+| P-16 | Product listing and delisting | M02 | New product or change | Listed / delisted product version |
+| P-17 | Fund use monitoring | M12, M13 | Disbursement | Use-of-funds confirmation or signal |
+| P-18 | Risk screening campaign | M12 | Management decision, sector event | Screening findings and actions |
+| P-19 | Archive lifecycle | M15 | Business object created | Complete, filed archive |
+| P-20 | Credit accounting and reconciliation | M11 | Every business event; end of day | GL postings; reconciliation report |
+| P-21 | Interbank (peer) counterparty limit | M03, M04, M05, M07 | Treasury / interbank business need | Approved counterparty limit |
+
+### 9.1 P-16 Product listing and delisting
+
+| Step | Actor | Activity | Rules |
+| --- | --- | --- | --- |
+| 1 | Product manager | Create product version from components | Mandatory components by category |
+| 2 | Product manager | Bind processes, report templates, accounting rules | Bound items must be in "active" status |
+| 3 | Product manager | Run product test (simulated applications) | Test results attached |
+| 4 | Risk | Review eligibility, pricing, collateral rules | Opinion recorded |
+| 5 | Finance | Review accounting rules | Opinion recorded |
+| 6 | Approver | Approve listing with effective date | Maker ≠ checker |
+| 7 | System | Publish product version to channels | E-PRODUCT-LISTED |
+| 8 | Product manager | Suspend or delist when needed | Delisting blocks new applications only; existing contracts unaffected |
+
+### 9.2 P-17 Fund use monitoring
+
+```mermaid
+flowchart TD
+    A[E-LOAN-DISBURSED] --> B{Payment type}
+    B -- entrusted --> C[Beneficiary and amount<br/>match purchase contract?]
+    B -- self-directed --> D[Request use-of-funds evidence<br/>within N days]
+    C -- yes --> F[Monitor account flows<br/>for 90 days]
+    C -- no --> S[Signal: purpose mismatch]
+    D --> E{Evidence received<br/>and consistent?}
+    E -- yes --> F
+    E -- no --> S
+    F --> G{Abnormal flow rules}
+    G -- funds back to borrower<br/>or related party --> S
+    G -- restricted use --> S
+    G -- none --> H[Close monitoring:<br/>use confirmed]
+    S --> I[Post-loan task to RM<br/>via M12]
+```
+
+Abnormal flow rules (examples, configured in M13):
+
+| Rule | Description | Default action |
+| --- | --- | --- |
+| FF-01 | Over 30% of disbursed amount returns to the borrower or a related party within 30 days | SIGNAL (orange) |
+| FF-02 | Funds transferred to securities, futures or crypto accounts | SIGNAL (red) |
+| FF-03 | Funds used to repay other loans (unless that is the approved purpose) | SIGNAL (orange) |
+| FF-04 | Payment split into many transfers just under the entrusted-payment threshold | SIGNAL (orange) |
+| FF-05 | Beneficiary is on the blacklist or is a shell company | SIGNAL (red) |
+
+### 9.3 P-18 Risk screening campaign
+
+| Step | Actor | Activity |
+| --- | --- | --- |
+| 1 | Risk management | Define campaign: name, reason, criteria (industry, region, product, rating, exposure size), deadline |
+| 2 | System | Select matching customers and loans; show count and exposure before launch |
+| 3 | Risk management | Approve and launch |
+| 4 | System | Create one screening task per customer for the responsible RM |
+| 5 | RM | Complete screening checklist; record findings and proposed actions |
+| 6 | Risk | Review findings; approve actions (watch list, freeze, downgrade, re-classification) |
+| 7 | System | Execute approved actions in M07, M13 |
+| 8 | Risk | Consolidated campaign report (M16) to management |
+
+### 9.4 P-19 Archive lifecycle
+
+```mermaid
+flowchart LR
+    A[Business object created] --> B[Archive file opened]
+    B --> C[Documents added<br/>during the process]
+    C --> D[Completeness check<br/>by archive officer]
+    D -- missing --> C
+    D -- complete --> E[Filed:<br/>e-archive + physical location]
+    E --> F[Borrow / view<br/>with approval]
+    F --> E
+    E --> G[Business closed]
+    G --> H[Retention period]
+    H --> I[Destruction approved]
+```
+
+### 9.5 P-20 Credit accounting and reconciliation
+
+| Time | Activity | Module |
+| --- | --- | --- |
+| Real time | Each business event creates an ACCOUNTING_EVENT; entries generated from the product's rules | M11 |
+| Real time | Entries sent to the GL interface | M11 → GL |
+| End of day | Accrual and overdue events from the daily batch | M10 → M11 |
+| End of day | Reconcile credit sub-ledger vs GL by account and vs core banking by loan | M11 |
+| Next morning | Breaks report; finance and operations resolve; corrections posted as new events | M11, M16 |
+| Month end | ECL provision events from M13; non-accrual transfers | M13 → M11 |
+
+### 9.6 P-21 Interbank (peer) counterparty limit
+
+| Step | Activity | Notes |
+| --- | --- | --- |
+| 1 | Onboard financial institution as a peer customer | Licence, regulator, capital data |
+| 2 | Peer rating | Financial institution model in M04 |
+| 3 | Counterparty limit application by product line (money market, bond, FX, derivatives, trade finance) | One application, sub-limits per line |
+| 4 | Approval by interbank credit authority | Separate authority matrix rows |
+| 5 | Limit set up in M07 with sub-limits | Occupied by treasury systems through the real-time API |
+| 6 | Daily monitoring of utilization and the institution's warning signals | Rating agency changes feed M13 |
+
+---
+
+## 10. Additional data entities
+
+These entities support the modules in section 8. Common audit columns (created/updated by and at, version_no) apply to every table (DR-8).
+
+### 10.1 Product
+
+| Entity | Field | Type | Req | Description |
+| --- | --- | --- | --- | --- |
+| PRODUCT | product_code | varchar(10) | Y | PK |
+| | product_name | varchar(100) | Y | |
+| | category_code | varchar(10) | Y | Catalog node |
+| | business_line | varchar(10) | Y | CORP, RETAIL, INTERBANK, TRADE |
+| | current_version | integer | Y | Latest listed version |
+| | status | varchar(10) | Y | DRAFT, REVIEW, LISTED, SUSPENDED, DELISTED |
+| PRODUCT_VERSION | product_code + version_no | varchar + integer | Y | PK |
+| | effective_from / effective_to | date | Y / N | |
+| | approved_by / approved_at | varchar / timestamp | Y | |
+| PRODUCT_COMPONENT | product_code + version_no + component_type | — | Y | PK |
+| | component_ref | varchar(20) | C | Reference to a shared library component, or |
+| | config_json | json | C | inline parameters (one of the two) |
+
+### 10.2 Process
+
+| Entity | Field | Type | Req | Description |
+| --- | --- | --- | --- | --- |
+| PROCESS_DEFINITION | process_key + version_no | varchar + integer | Y | PK |
+| | process_name | varchar(100) | Y | |
+| | definition_json | json | Y | Nodes, transitions, conditions |
+| | status | varchar(10) | Y | DRAFT, ACTIVE, RETIRED |
+| PROCESS_INSTANCE | instance_id | varchar(30) | Y | PK |
+| | process_key + version_no | — | Y | Definition used |
+| | business_type + business_id | varchar | Y | The application, loan, etc. |
+| | current_node | varchar(30) | Y | |
+| | started_at / ended_at | timestamp | Y / N | |
+| | instance_status | varchar(10) | Y | RUNNING, COMPLETED, TERMINATED |
+| TASK | task_id | varchar(30) | Y | PK (generalizes APPROVAL_TASK) |
+| | instance_id, node_id | varchar | Y | |
+| | assignee / candidate_group | varchar | C | User, or pool |
+| | due_at | timestamp | Y | SLA |
+| | task_status | varchar(10) | Y | OPEN, CLAIMED, DONE, RETURNED, CANCELLED |
+
+### 10.3 Report and archive
+
+| Entity | Field | Type | Req | Description |
+| --- | --- | --- | --- | --- |
+| REPORT_TEMPLATE | template_id + version_no | — | Y | PK |
+| | report_type | varchar(20) | Y | INVESTIGATION, REVIEW, APPROVAL, INSPECTION, LETTER |
+| | layout_json | json | Y | Sections, fields, data bindings |
+| REPORT_INSTANCE | report_id | varchar(30) | Y | PK |
+| | template_id + version_no | — | Y | |
+| | business_type + business_id | varchar | Y | |
+| | content_json | json | Y | Field values and edited text |
+| | report_status | varchar(10) | Y | DRAFT, FINAL, LOCKED |
+| | pdf_doc_id | varchar(20) | N | FK → DOCUMENT when generated |
+| ARCHIVE_FILE | archive_id | varchar(20) | Y | PK |
+| | business_type + business_id | varchar | Y | Owner object |
+| | completeness_status | varchar(10) | Y | OPEN, INCOMPLETE, COMPLETE |
+| | physical_location | varchar(50) | N | Room, shelf, box |
+| | retention_until | date | N | Set at business closure |
+| | legal_hold | boolean | Y | Blocks destruction |
+| ARCHIVE_ITEM | item_id, archive_id | varchar | Y | |
+| | doc_type | varchar(20) | Y | From checklist |
+| | doc_id | varchar(20) | C | Electronic copy |
+| | original_held | boolean | Y | Physical original in archive |
+| ARCHIVE_BORROW | borrow_id, archive_id | varchar | Y | |
+| | borrower_user_id, purpose | varchar | Y | |
+| | approved_by | varchar(20) | Y | |
+| | due_date / returned_date | date | Y / N | |
+
+### 10.4 Risk control and post-loan
+
+| Entity | Field | Type | Req | Description |
+| --- | --- | --- | --- | --- |
+| RISK_RULE | rule_id + version_no | — | Y | PK |
+| | interception_point | varchar(20) | Y | ONBOARD, APPLY, APPROVE, CONTRACT, DISBURSE, POSTLOAN |
+| | condition_expr | text | Y | Rule expression |
+| | action_type | varchar(10) | Y | BLOCK, WARN, ESCALATE, REQUIRE, NOTIFY, SIGNAL |
+| | severity | varchar(10) | C | For SIGNAL |
+| | effective_from / effective_to | date | Y / N | |
+| RISK_HIT | hit_id | varchar(30) | Y | PK |
+| | rule_id + version_no | — | Y | |
+| | business_type + business_id | varchar | Y | |
+| | input_snapshot | json | Y | Data evaluated |
+| | action_taken | varchar(10) | Y | |
+| | hit_at | timestamp | Y | |
+| FUND_FLOW_CHECK | check_id, loan_id | varchar | Y | |
+| | payment_type | varchar(10) | Y | ENTRUSTED, SELF |
+| | evidence_due_date | date | C | For SELF |
+| | monitoring_until | date | Y | |
+| | result | varchar(10) | Y | OPEN, CONFIRMED, ABNORMAL |
+| SCREENING_CAMPAIGN | campaign_id | varchar(20) | Y | PK |
+| | reason, criteria_json | text / json | Y | |
+| | target_count, target_exposure | integer / decimal | Y | At launch |
+| | deadline | date | Y | |
+| | campaign_status | varchar(10) | Y | DRAFT, LAUNCHED, CLOSED |
+
+### 10.5 Guarantee, accounting and asset preservation
+
+| Entity | Field | Type | Req | Description |
+| --- | --- | --- | --- | --- |
+| GUARANTOR_EXPOSURE | guarantor_customer_id + as_of_date | — | Y | PK; daily snapshot |
+| | total_guaranteed | decimal(20,2) | Y | Across all guarantees |
+| | capacity_limit | decimal(20,2) | N | Approved capacity |
+| GUARANTEE_COMPANY | company_customer_id | varchar(20) | Y | PK |
+| | agreement_no, agreement_end | varchar / date | Y | |
+| | margin_ratio | decimal(5,2) | Y | Margin deposit required |
+| | max_exposure | decimal(20,2) | Y | Cap on bank exposure guaranteed |
+| | compensation_rate | decimal(5,2) | N | Performance on past claims |
+| ACCOUNTING_EVENT | event_id | varchar(30) | Y | PK |
+| | event_type | varchar(20) | Y | DISBURSE, ACCRUE, REPAY, OVERDUE, NONACCRUAL, PROVISION, WRITEOFF, RECOVER, OFFBAL_ISSUE, FEE |
+| | product_code + version_no | — | Y | Rule source |
+| | source_type + source_id | varchar | Y | Loan, contract, etc. |
+| | amount, currency, value_date | — | Y | |
+| | post_status | varchar(10) | Y | PENDING, POSTED, FAILED |
+| ACCOUNTING_ENTRY | entry_id, event_id | varchar | Y | |
+| | gl_account | varchar(20) | Y | |
+| | dr_cr | char(1) | Y | D or C |
+| | amount | decimal(20,2) | Y | Sum of D = sum of C per event |
+| | gl_ref | varchar(40) | N | GL posting reference |
+| NPL_ASSET | npl_id | varchar(20) | Y | PK |
+| | loan_id, customer_id | varchar | Y | |
+| | transfer_date | date | Y | Into preservation |
+| | principal, interest, costs | decimal(20,2) | Y | Claim amounts |
+| | owner_user_id | varchar(20) | Y | Special assets officer |
+| | npl_status | varchar(10) | Y | OPEN, IN_DISPOSAL, RECOVERED, SOLD, WRITTEN_OFF, CLOSED |
+| DISPOSAL_PLAN | plan_id, npl_id | varchar | Y | |
+| | route | varchar(15) | Y | COLLECT, RESTRUCT, LITIGATE, DEBT_ASSET, SALE, WRITEOFF |
+| | expected_recovery | decimal(20,2) | Y | |
+| | approved_by | varchar(20) | Y | |
+| | plan_status | varchar(10) | Y | DRAFT, APPROVED, EXECUTING, DONE |
+| FORECLOSED_ASSET | asset_id, npl_id | varchar | Y | Asset received in settlement |
+| | book_value, valuation_date | decimal / date | Y | |
+| | disposal_deadline | date | Y | Holding period limit |
+
+### 10.6 Additional events and rules
+
+| Event | Published by | Main consumers |
+| --- | --- | --- |
+| E-PRODUCT-LISTED / E-PRODUCT-DELISTED | M02 | Channels, M05 |
+| E-RISK-HIT | M13 | Originating module, audit |
+| E-FUNDFLOW-ABNORMAL | M12 | M13 (signal), RM task |
+| E-CAMPAIGN-LAUNCHED | M12 | M01 (tasks) |
+| E-NPL-TRANSFERRED | M14 | M11, M10, reporting |
+| E-ACCOUNTING-POSTED / E-ACCOUNTING-FAILED | M11 | M16, operations |
+| E-ARCHIVE-COMPLETE | M15 | Process close-out |
+
+| Rule ID | Area | Rule |
+| --- | --- | --- |
+| BR-PRD-001 | Product | A product version cannot be listed without process, report-template and accounting-rule bindings |
+| BR-PRD-002 | Product | Delisting blocks new applications; existing contracts keep their version |
+| BR-GUA-001 | Guarantee | Total guaranteed by one guarantor ≤ approved guarantor capacity |
+| BR-GUA-002 | Guarantee | Mutual or chain guarantees among applicants raise an orange signal and escalate approval |
+| BR-ACC-001 | Accounting | Every accounting event must balance (sum debits = sum credits) before posting |
+| BR-ACC-002 | Accounting | Interest stops accruing on-balance-sheet when a loan becomes non-accrual |
+| BR-FF-001 | Fund monitoring | Self-directed payment evidence overdue by more than 10 days raises a yellow signal |
+| BR-ARC-001 | Archives | A business object cannot be closed until its archive is COMPLETE |
+| BR-ARC-002 | Archives | Files under legal hold cannot be destroyed |
+| BR-NPL-001 | Asset preservation | A disposal plan with expected loss above the threshold needs committee approval |
+
+---
+
+## 11. Open questions
 
 These items depend on the bank's jurisdiction, licence and policy, and must be confirmed before functional specification.
 
@@ -1445,3 +2208,7 @@ These items depend on the bank's jurisdiction, licence and policy, and must be c
 | Q-5 | Are guarantee companies (保証会社) used for retail products, and how are their approvals integrated? | P-03, GUARANTEE |
 | Q-6 | Approval validity, revaluation frequencies, haircuts and DPD thresholds: confirm the bank's policy values | Parameters |
 | Q-7 | Data residency and retention periods for credit files and personal data | DR-6, archiving |
+| Q-8 | "Guarantee management": does it mean guarantees the bank receives (assumed here, M09), bank-issued guarantees (L/Gs), or both? | M09, M02 |
+| Q-9 | Service granularity: deploy the 17 modules as separate microservices, or group some (e.g. M15–M17 as one shared service) for the first release? | Architecture, operations |
+| Q-10 | Which accounting standard and local rules decide the non-accrual point and the GL account structure? | M11 |
+| Q-11 | Is a separate treasury system the owner of interbank exposures, with the CMS holding only the counterparty limits? | P-21, M07 |
